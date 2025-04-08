@@ -474,6 +474,7 @@ class FastModel(FastBaseModel):
         if token is None: token = get_token()
 
         SUPPORTS_BFLOAT16 = is_bfloat16_supported()
+        import pdb;pdb.set_trace()
         if dtype is None:
             dtype = torch.float16 if not SUPPORTS_BFLOAT16 else torch.bfloat16
         elif dtype == torch.bfloat16 and not SUPPORTS_BFLOAT16:

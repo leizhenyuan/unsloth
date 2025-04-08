@@ -1668,7 +1668,7 @@ class FastLlamaModel:
                     print("Unsloth: vLLM does not work on older GPUs - will switch to Unsloth inference!")
                     fast_inference = False
             pass
-        elif DEVICE_TYPE == "xpu":
+        elif DEVICE_TYPE == "xpu" and fast_inference:
             assert False, "XPU currently will not support fast_inference (Vllm) when using unsloth"
 
         if token is None: token = get_token()
@@ -1690,9 +1690,9 @@ class FastLlamaModel:
             f' "-____-"     Free license: http://github.com/unslothai/unsloth'
         elif DEVICE_TYPE == "xpu":
             statistics = \
-            f"==((====))==  Unsloth {__version__}: Fast {model_patcher.__name__[4:-5]} patching. Transformers: {transformers_version}.{vllm_version}\n"\
+            f"==((====))==  Unsloth {__version__}: Fast {model_patcher.__name__[4:-5]} patching. Transformers: {transformers_version}\n"\
             f"   {chr(92)}{chr(92)}   /|    {gpu_stats.name}. Num GPUs = {torch.xpu.device_count()}. Max memory: {max_memory} GB. Platform: {platform_system}.\n"\
-            f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. XPU: {gpu_stats.major}.{gpu_stats.minor}. Intel Toolkit: {torch.version.cuda}. Triton: {triton_version}\n"\
+            f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. Intel Toolkit: {torch.version.xpu}. Triton: {triton_version}\n"\
             f"{chr(92)}        /    Bfloat16 = {str(SUPPORTS_BFLOAT16).upper()}. FA [Xformers = {xformers_version}. FA2 = {HAS_FLASH_ATTENTION}]\n"\
             f' "-____-"     Free license: http://github.com/unslothai/unsloth'
 
@@ -1716,6 +1716,7 @@ class FastLlamaModel:
         if dtype is None:
             dtype = torch.float16 if not SUPPORTS_BFLOAT16 else torch.bfloat16
         elif dtype == torch.bfloat16 and not SUPPORTS_BFLOAT16:
+            import pdb;pdb.set_trace()
             logger.warning_once("Device does not support bfloat16. Will change to float16.")
             dtype = torch.float16
         # elif dtype == torch.float16 and SUPPORTS_BFLOAT16:

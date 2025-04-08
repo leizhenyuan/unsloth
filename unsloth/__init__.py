@@ -147,7 +147,7 @@ if DEVICE_TYPE == "cuda":
     pass
 elif DEVICE_TYPE == "xpu":
     # all xpu device support BF16
-    SUPPORTS_BFLOAT16 = True
+    SUPPORTS_BFLOAT16 = False
 
     def is_bf16_supported(): 
         return SUPPORTS_BFLOAT16

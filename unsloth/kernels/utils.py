@@ -45,8 +45,11 @@ from packaging.version import Version
 import triton
 import triton.language as tl
 if Version(triton.__version__) >= Version("3.0.0"):
-    from triton.language.extra import libdevice
-    triton_tanh = libdevice.tanh
+    if DEVICE_TYPE == "xpu":
+        triton_tanh = tl.extra.intel.libdevice.tanh
+    else:
+        from triton.language.extra import libdevice
+        triton_tanh = libdevice.tanh
     triton_cast = tl.cast
 else:
     triton_tanh = tl.math.tanh
