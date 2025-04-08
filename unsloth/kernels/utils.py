@@ -21,13 +21,21 @@ import functools
 import torch
 torch_Tensor = torch.Tensor
 from packaging.version import Version
-if Version(torch.__version__) < Version("2.4.0"):
-    torch_amp_custom_fwd = torch.cuda.amp.custom_fwd
-    torch_amp_custom_bwd = torch.cuda.amp.custom_bwd
-else:
-    torch_amp_custom_fwd = torch.amp.custom_fwd(device_type = "cuda")
-    torch_amp_custom_bwd = torch.amp.custom_bwd(device_type = "cuda")
-pass
+if DEVICE_TYPE == "cuda":
+    if Version(torch.__version__) < Version("2.4.0"):
+        torch_amp_custom_fwd = torch.cuda.amp.custom_fwd
+        torch_amp_custom_bwd = torch.cuda.amp.custom_bwd
+    else:
+        torch_amp_custom_fwd = torch.amp.custom_fwd(device_type = "cuda")
+        torch_amp_custom_bwd = torch.amp.custom_bwd(device_type = "cuda")
+    pass
+elif DEVICE_TYPE == "xpu":
+    if Version(torch.__version__) < Version("2.4.0"):
+        torch_amp_custom_fwd = torch.xpu.amp.custom_fwd
+        torch_amp_custom_bwd = torch.xpu.amp.custom_bwd
+    else:
+        torch_amp_custom_fwd = torch.amp.custom_fwd(device_type = "xpu")
+        torch_amp_custom_bwd = torch.amp.custom_bwd(device_type = "xpu")
 
 
 # tl.math.tanh now is libdevice.tanh
@@ -60,13 +68,12 @@ def calculate_settings(n : int) -> (int, int,):
     return BLOCK_SIZE, num_warps
 pass
 
-
-import bitsandbytes as bnb
+if DEVICE_TYPE == "cuda":
+    import bitsandbytes as bnb
+    # https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1330/files
+    HAS_CUDA_STREAM = Version(bnb.__version__) > Version("0.43.3")
+    get_ptr = bnb.functional.get_ptr
 import ctypes
-
-# https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1330/files
-HAS_CUDA_STREAM = Version(bnb.__version__) > Version("0.43.3")
-get_ptr = bnb.functional.get_ptr
 
 if torch.cuda.device_count() > 1:
     torch_cuda_device = torch.cuda.device
