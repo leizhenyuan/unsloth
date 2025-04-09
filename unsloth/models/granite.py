@@ -20,8 +20,11 @@ from .llama import (
     LlamaLinearScalingRotaryEmbedding,
 )
 from .mistral import *
-from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
-from peft.tuners.lora import Linear4bit as Peft_Linear4bit
+from unsloth import DEVICE_TYPE
+
+if DEVICE_TYPE == "cuda":
+    from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
+    from peft.tuners.lora import Linear4bit as Peft_Linear4bit
 try:
     from transformers.models.granite.modeling_granite import (
         GraniteAttention,
