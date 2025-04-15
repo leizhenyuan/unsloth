@@ -18,6 +18,7 @@ import os, re, subprocess, inspect
 import numpy as np
 import torch
 
+# Detect current device type, currently support NVIDIA and Intel GPU
 def get_device_type():
     if torch.cuda.is_available():
         return "cuda"
@@ -100,7 +101,7 @@ pass
 
 # First check if CUDA is available ie a NVIDIA GPU is seen
 if not torch.cuda.is_available() and not torch.xpu.is_available():
-    raise NotImplementedError("Unsloth: No NVIDIA GPU or Intel XPU found? Unsloth currently only supports NVIDIA GPU or Intel XPU!")
+    raise NotImplementedError("Unsloth: No NVIDIA GPU or Intel GPU found? Unsloth currently only supports NVIDIA GPU or Intel XPU!")
 
 # Fix Xformers performance issues since 0.0.25
 import importlib.util
@@ -148,7 +149,7 @@ if DEVICE_TYPE == "cuda":
     pass
 elif DEVICE_TYPE == "xpu":
     # all xpu device support BF16
-    SUPPORTS_BFLOAT16 = False
+    SUPPORTS_BFLOAT16 = True
 
     def is_bf16_supported(): 
         return SUPPORTS_BFLOAT16
@@ -214,7 +215,7 @@ if DEVICE_TYPE == "cuda":
             )
     pass
 elif DEVICE_TYPE == "xpu":
-    # will add xpu bnb support later
+    # TODO: will add bnb support for Intel XPU
     pass
 
 
