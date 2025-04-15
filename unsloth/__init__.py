@@ -158,7 +158,10 @@ elif DEVICE_TYPE == "xpu":
 # For Gradio HF Spaces?
 # if "SPACE_AUTHOR_NAME" not in os.environ and "SPACE_REPO_NAME" not in os.environ:
 import triton
-if DEVICE_TYPE == "cuda":
+if DEVICE_TYPE == "xpu":
+    # TODO: will add bnb support for Intel XPU and triton device specific config
+    pass
+elif DEVICE_TYPE == "cuda":
     libcuda_dirs = lambda: None
     if Version(triton.__version__) >= Version("3.0.0"):
         try: from triton.backends.nvidia.driver import libcuda_dirs
@@ -213,9 +216,6 @@ if DEVICE_TYPE == "cuda":
                 "Also try `sudo ldconfig /usr/local/cuda-xx.x` - find the latest cuda version.\n"\
                 "Unsloth will still run for now, but maybe it might crash - let's hope it works!"
             )
-    pass
-elif DEVICE_TYPE == "xpu":
-    # TODO: will add bnb support for Intel XPU
     pass
 
 

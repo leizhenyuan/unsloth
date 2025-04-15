@@ -508,7 +508,7 @@ cu126-ampere-torch260 = [
     "unsloth[flashattention]",
 ]
 
-intel-xpu-torch260 = [
+intel-gpu-torch260 = [
     "unsloth[huggingface]",
 
     "pytorch_triton_xpu @ https://download.pytorch.org/whl/pytorch_triton_xpu-3.2.0-cp39-cp39-linux_x86_64.whl#sha256=147607f190a7d7aa24ba454def5977fbbfec792fdae18e4ed278cfec29b69271 ; platform_system == 'Linux' and python_version == '3.9' and platform_machine == 'x86_64'",
