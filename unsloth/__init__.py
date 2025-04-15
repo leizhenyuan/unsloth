@@ -18,7 +18,7 @@ import os, re, subprocess, inspect
 import numpy as np
 import torch
 
-# Detect current device type, currently support NVIDIA and Intel GPU
+# Detect current device type, currently support NVIDIA and Intel GPU(XPU)
 def get_device_type():
     if torch.cuda.is_available():
         return "cuda"
@@ -101,7 +101,7 @@ pass
 
 # First check if CUDA is available ie a NVIDIA GPU is seen
 if not torch.cuda.is_available() and not torch.xpu.is_available():
-    raise NotImplementedError("Unsloth: No NVIDIA GPU or Intel GPU found? Unsloth currently only supports NVIDIA GPU or Intel XPU!")
+    raise NotImplementedError("Unsloth: No NVIDIA GPU or Intel GPU found? Unsloth currently only supports NVIDIA GPU or Intel GPU!")
 
 # Fix Xformers performance issues since 0.0.25
 import importlib.util
@@ -159,7 +159,7 @@ elif DEVICE_TYPE == "xpu":
 # if "SPACE_AUTHOR_NAME" not in os.environ and "SPACE_REPO_NAME" not in os.environ:
 import triton
 if DEVICE_TYPE == "xpu":
-    # TODO: will add bnb support for Intel XPU and triton device specific config
+    # TODO: will add bnb support for Intel GPU and triton device specific config
     pass
 elif DEVICE_TYPE == "cuda":
     libcuda_dirs = lambda: None
