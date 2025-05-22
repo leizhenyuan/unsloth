@@ -1661,9 +1661,8 @@ class FastLlamaModel:
             )
         pass
         if fast_inference:
-            import platform
-            if platform.system().lower() == 'windows':
-                print("Unsloth: vLLM does not work in Windows! Will use Unsloth inference!")
+            if not is_vLLM_available():
+                print("Unsloth: vLLM is not installed! Will use Unsloth inference!")
                 fast_inference = False
             major_version, minor_version = torch.cuda.get_device_capability()
             if major_version < 7:
@@ -1732,7 +1731,7 @@ class FastLlamaModel:
         except: pass
         has_rope_scaling = True
 
-        # If max_seq_length is not specified, use maximum fron config
+        # If max_seq_length is not specified, use maximum from config
         if max_seq_length is None:
             max_seq_length = model_max_seq_length
         pass
@@ -1754,7 +1753,7 @@ class FastLlamaModel:
             # Warn RoPE scaling isn't allowed
             if not has_rope_scaling:
                 raise RuntimeError(
-                    "However, {model_name} doesn't support RoPE Scaling!\n"\
+                    f"However, {model_name} doesn't support RoPE Scaling!\n"\
                     "Please file a feature request at https://github.com/unslothai/unsloth."
                 )
             pass
