@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "2025.5.1"
+__version__ = "2025.5.7"
 
 __all__ = [
     "SUPPORTS_BFLOAT16",
     "is_bfloat16_supported",
+    "is_vLLM_available",
 
     "prepare_model_for_kbit_training",
     "xformers",
@@ -75,6 +76,7 @@ import contextlib
 import re
 import warnings, subprocess, re, inspect, psutil, os, math
 from unsloth_zoo.utils import Version
+from unsloth import DEVICE_TYPE
 
 from unsloth_zoo.tokenizer_utils import (
     patch_tokenizer as _patch_tokenizer,
@@ -146,7 +148,7 @@ class HideLoggingMessage(logging.Filter):
     def filter(self, x): return not (self.text in x.getMessage())
 pass
 
-# The speedups for torchdynamo mostly come wih GPU Ampere or higher and which is not detected here.
+# The speedups for torchdynamo mostly come with GPU Ampere or higher and which is not detected here.
 from transformers.training_args import logger as transformers_training_args_logger
 transformers_training_args_logger.addFilter(HideLoggingMessage("The speedups"))
 # torch.distributed process group is initialized, but parallel_mode != ParallelMode.DISTRIBUTED.
@@ -289,13 +291,20 @@ pass
 # =============================================
 # torch.cuda.amp.custom_fwd is deprecated >= 2.4
 torch_version = torch.__version__
-if Version(torch_version) < Version("2.4.0"):
-    torch_amp_custom_fwd = torch.cuda.amp.custom_fwd
-    torch_amp_custom_bwd = torch.cuda.amp.custom_bwd
-else:
-    torch_amp_custom_fwd = torch.amp.custom_fwd(device_type = "cuda")
-    torch_amp_custom_bwd = torch.amp.custom_bwd(device_type = "cuda")
-pass
+if DEVICE_TYPE == "cuda":
+    if Version(torch_version) < Version("2.4.0"):
+        torch_amp_custom_fwd = torch.cuda.amp.custom_fwd
+        torch_amp_custom_bwd = torch.cuda.amp.custom_bwd
+    else:
+        torch_amp_custom_fwd = torch.amp.custom_fwd(device_type = "cuda")
+        torch_amp_custom_bwd = torch.amp.custom_bwd(device_type = "cuda")
+    pass
+elif DEVICE_TYPE == "xpu":
+    if Version(torch_version) < Version("2.6.0"):
+        raise RuntimeError("torch.xpu currently only supports torch.version >= 2.6.0")
+    else:
+        torch_amp_custom_fwd = torch.amp.custom_fwd(device_type = "xpu")
+        torch_amp_custom_bwd = torch.amp.custom_bwd(device_type = "xpu")
 # =============================================
 
 # =============================================
@@ -336,60 +345,67 @@ pass
 
 # =============================================
 # Get Flash Attention v2 if Ampere (RTX 30xx, A100)
-import bitsandbytes as bnb
+if DEVICE_TYPE == "cuda":
+    import bitsandbytes as bnb
+
 from transformers import AutoTokenizer
 from transformers.utils.import_utils import _is_package_available
 
-major_version, minor_version = torch.cuda.get_device_capability()
 SUPPORTS_BFLOAT16 = False
 HAS_FLASH_ATTENTION = False
 HAS_FLASH_ATTENTION_SOFTCAPPING = False
 
-if major_version >= 8:
-    SUPPORTS_BFLOAT16 = True
-    if _is_package_available("flash_attn"):
-        # Check for CUDA linking errors "undefined symbol: _ZNK3c106SymIntltEl"
-        try:
+if DEVICE_TYPE == "cuda":
+    major_version, minor_version = torch.cuda.get_device_capability()
+
+
+    if major_version >= 8:
+        SUPPORTS_BFLOAT16 = True
+        if _is_package_available("flash_attn"):
+            # Check for CUDA linking errors "undefined symbol: _ZNK3c106SymIntltEl"
             try:
-                # See https://github.com/unslothai/unsloth/issues/1437
-                from flash_attn.flash_attn_interface import flash_attn_gpu
+                try:
+                    # See https://github.com/unslothai/unsloth/issues/1437
+                    from flash_attn.flash_attn_interface import flash_attn_gpu
+                except:
+                    from flash_attn.flash_attn_interface import flash_attn_cuda
+                HAS_FLASH_ATTENTION = True
+
+                # Also check for softcapping
+                from flash_attn import __version__ as flash_attn_version
+                HAS_FLASH_ATTENTION_SOFTCAPPING = Version(flash_attn_version) >= Version("2.6.3")
+                if not HAS_FLASH_ATTENTION_SOFTCAPPING:
+                    print(
+                        "Unsloth: If you want to finetune Gemma 2, upgrade flash-attn to version 2.6.3 or higher!\n"\
+                        "Newer versions support faster and less memory usage kernels for Gemma 2's attention softcapping!\n"\
+                        "To update flash-attn, do the below:\n"\
+                        '\npip install --no-deps --upgrade "flash-attn>=2.6.3"'
+                    )
             except:
-                from flash_attn.flash_attn_interface import flash_attn_cuda
-            HAS_FLASH_ATTENTION = True
-
-            # Also check for softcapping
-            from flash_attn import __version__ as flash_attn_version
-            HAS_FLASH_ATTENTION_SOFTCAPPING = Version(flash_attn_version) >= Version("2.6.3")
-            if not HAS_FLASH_ATTENTION_SOFTCAPPING:
                 print(
-                    "Unsloth: If you want to finetune Gemma 2, upgrade flash-attn to version 2.6.3 or higher!\n"\
-                    "Newer versions support faster and less memory usage kernels for Gemma 2's attention softcapping!\n"\
-                    "To update flash-attn, do the below:\n"\
-                    '\npip install --no-deps --upgrade "flash-attn>=2.6.3"'
+                    "Unsloth: Your Flash Attention 2 installation seems to be broken?\n"\
+                    "A possible explanation is you have a new CUDA version which isn't\n"\
+                    "yet compatible with FA2? Please file a ticket to Unsloth or FA2.\n"\
+                    "We shall now use Xformers instead, which does not have any performance hits!\n"\
+                    "We found this negligible impact by benchmarking on 1x A100."
                 )
-        except:
-            print(
-                "Unsloth: Your Flash Attention 2 installation seems to be broken?\n"\
-                "A possible explanation is you have a new CUDA version which isn't\n"\
-                "yet compatible with FA2? Please file a ticket to Unsloth or FA2.\n"\
-                "We shall now use Xformers instead, which does not have any performance hits!\n"\
-                "We found this negligible impact by benchmarking on 1x A100."
-            )
 
-            # Stop Flash Attention from importing!
-            import transformers.utils.import_utils
-            transformers.utils.import_utils.is_flash_attn_2_available = lambda *args, **kwargs: False
-            import transformers.utils
-            transformers.utils.is_flash_attn_2_available = lambda *args, **kwargs: False
+                # Stop Flash Attention from importing!
+                import transformers.utils.import_utils
+                transformers.utils.import_utils.is_flash_attn_2_available = lambda *args, **kwargs: False
+                import transformers.utils
+                transformers.utils.is_flash_attn_2_available = lambda *args, **kwargs: False
 
+                HAS_FLASH_ATTENTION = False
+            pass
+        else:
             HAS_FLASH_ATTENTION = False
-        pass
     else:
+        # Tri Dao's benchmark shows xformers is faster for now.
         HAS_FLASH_ATTENTION = False
-else:
-    # Tri Dao's benchmark shows xformers is faster for now.
-    HAS_FLASH_ATTENTION = False
-pass
+    pass
+elif DEVICE_TYPE == "xpu":
+    SUPPORTS_BFLOAT16=True
 
 from transformers.models.llama.modeling_llama import logger
 
@@ -800,6 +816,9 @@ def is_bfloat16_supported():
     return SUPPORTS_BFLOAT16
 pass
 
+def is_vLLM_available():
+    return _is_package_available("vllm")
+pass
 
 # Patches models to add RoPE Scaling
 def patch_linear_scaling(
@@ -1170,6 +1189,7 @@ def unsloth_compile_transformers(
     import_from_cache       = False,
     disable                 = False,
     return_logits           = False,
+    unsloth_force_compile   = False,
 ):
     if Version(torch_version) < Version("2.4.0"):
         print(
@@ -1180,12 +1200,12 @@ def unsloth_compile_transformers(
         )
         return
     pass
-    if trust_remote_code:
+    if trust_remote_code and unsloth_force_compile == False:
         print(
             "Unsloth: We can't trace models if `trust_remote_code = True`, "\
             "so turning off some optimizations!"
         )
-        return
+        return model_types, False
     model_types = list(dict().fromkeys(model_types).keys())
     if disable: return model_types, False
 

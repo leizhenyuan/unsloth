@@ -61,6 +61,7 @@ except:
     # Old HF Hub versions <= 0.0.25
     from huggingface_hub.utils._token import get_token
 pass
+from unsloth import DEVICE_TYPE
 
 __all__ = [
     "FastBaseModel",
@@ -95,8 +96,18 @@ def unsloth_base_fast_generate(
         input_ids = kwargs["input_ids"]
     elif "input" in kwargs:
         input_ids = kwargs["input_ids"]
+    elif "input_features" in kwargs:
+        input_ids = kwargs["input_features"]
+    elif "input_embeds" in kwargs:
+        input_ids = kwargs["input_embeds"]
+    elif "inputs" in kwargs:
+        input_ids = kwargs["inputs"]
     else:
-        raise TypeError("Unsloth: You need to pass in input_ids to .generate!")
+        key = next(iter(kwargs.keys()))
+        if type(kwargs["key"]) is not torch.Tensor:
+            raise TypeError("Unsloth: You need to pass in input_ids to .generate!")
+        input_ids = kwargs[key]
+    pass
     assert(type(input_ids) is torch.Tensor)
     bsz = input_ids.shape[0]
 
@@ -188,7 +199,10 @@ def unsloth_base_fast_generate(
     # Use hybrid if sliding window seen, otherwise try static
     cache_implementation = getattr(self.config, "cache_implementation", None)
     if getattr(self, "_supports_static_cache", True):
-        cache_implementation = "static"
+        if os.environ.get("UNSLOTH_DISABLE_STATIC_GENERATION", "0") == "0":
+            cache_implementation = "static"
+        else:
+            cache_implementation = None
     else:
         cache_implementation = None
     if cache_implementation is not None:
@@ -197,12 +211,15 @@ def unsloth_base_fast_generate(
             cache_implementation = "static"
         else:
             cache_implementation = "hybrid"
+
     if "generation_config" in kwargs:
         kwargs["generation_config"].cache_implementation = cache_implementation
-        kwargs["generation_config"].compile_config = _compile_config
+        if cache_implementation is not None:
+            kwargs["generation_config"].compile_config = _compile_config
     else:
         kwargs["cache_implementation"] = cache_implementation
-        kwargs["compile_config"] = _compile_config
+        if cache_implementation is not None:
+            kwargs["compile_config"] = _compile_config
     pass
 
     try:
@@ -259,7 +276,10 @@ class FastBaseModel:
         pass
         if token is None: token = get_token()
         SUPPORTS_BFLOAT16 = is_bfloat16_supported()
-        gpu_stats = torch.cuda.get_device_properties(0)
+        if DEVICE_TYPE == "cuda":
+            gpu_stats = torch.cuda.get_device_properties(0)
+        elif DEVICE_TYPE == "xpu":
+            gpu_stats = torch.xpu.get_device_properties(0)
         max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
 
         from importlib.metadata import version as importlib_version
@@ -271,12 +291,21 @@ class FastBaseModel:
             for model_type_arch in model_types:
                 if model_type_arch != "siglip": break
 
-        statistics = \
-           f"==((====))==  Unsloth {__version__}: Fast {model_type_arch.title()} patching. Transformers: {transformers_version}.{vllm_version}\n"\
-           f"   {chr(92)}{chr(92)}   /|    {gpu_stats.name}. Num GPUs = {torch.cuda.device_count()}. Max memory: {max_memory} GB. Platform: {platform_system}.\n"\
-           f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. CUDA: {gpu_stats.major}.{gpu_stats.minor}. CUDA Toolkit: {torch.version.cuda}. Triton: {triton_version}\n"\
-           f"{chr(92)}        /    Bfloat16 = {str(SUPPORTS_BFLOAT16).upper()}. FA [Xformers = {xformers_version}. FA2 = {HAS_FLASH_ATTENTION}]\n"\
-           f' "-____-"     Free license: http://github.com/unslothai/unsloth'
+        if DEVICE_TYPE == "cuda":
+            statistics = \
+            f"==((====))==  Unsloth {__version__}: Fast {model_type_arch.title()} patching. Transformers: {transformers_version}.{vllm_version}\n"\
+            f"   {chr(92)}{chr(92)}   /|    {gpu_stats.name}. Num GPUs = {torch.cuda.device_count()}. Max memory: {max_memory} GB. Platform: {platform_system}.\n"\
+            f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. CUDA: {gpu_stats.major}.{gpu_stats.minor}. CUDA Toolkit: {torch.version.cuda}. Triton: {triton_version}\n"\
+            f"{chr(92)}        /    Bfloat16 = {str(SUPPORTS_BFLOAT16).upper()}. FA [Xformers = {xformers_version}. FA2 = {HAS_FLASH_ATTENTION}]\n"\
+            f' "-____-"     Free license: http://github.com/unslothai/unsloth'
+        elif DEVICE_TYPE == "xpu":
+            statistics = \
+            f"==((====))==  Unsloth {__version__}: Fast {model_type_arch.title()} patching. Transformers: {transformers_version}.{vllm_version}\n"\
+            f"   {chr(92)}{chr(92)}   /|    {gpu_stats.name}. Num GPUs = {torch.xpu.device_count()}. Max memory: {max_memory} GB. Platform: {platform_system}.\n"\
+            f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. XPU Toolkit: {torch.version.xpu}. Triton: {triton_version}\n"\
+            f"{chr(92)}        /    Bfloat16 = {str(SUPPORTS_BFLOAT16).upper()}. FA [Xformers = {xformers_version}. FA2 = {HAS_FLASH_ATTENTION}]\n"\
+            f' "-____-"     Free license: http://github.com/unslothai/unsloth'
+        
         print(statistics)
 
         # Warn about fast transfers
@@ -310,6 +339,19 @@ class FastBaseModel:
             bnb_compute_dtype = torch.float16
             do_forced_float32 = True
         pass
+
+        # Check for custom data-types
+        custom_datatype = None
+        correct_dtype = None
+        if os.environ.get("UNSLOTH_FORCE_CUSTOM_DTYPE", "") != "":
+            custom_datatype = os.environ["UNSLOTH_FORCE_CUSTOM_DTYPE"]
+            assert custom_datatype.count(";") == 1
+            bnb_compute_dtype, custom_datatype = custom_datatype.split(";", 1)
+            dtype = torch.float32
+            bnb_compute_dtype = eval(bnb_compute_dtype)
+            correct_dtype = bnb_compute_dtype
+        pass
+
         # Stop SDPA for some archs like Pixtral / Mistral3
         if not ("attn_implementation" in kwargs):
             kwargs["attn_implementation"] = "sdpa"
@@ -374,12 +416,18 @@ class FastBaseModel:
         # Return old flag
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = old_hf_transfer
 
+        # Edit data-types
+        if custom_datatype is not None:
+            for name, module in model.named_modules():
+                exec(custom_datatype)
+        pass
+
         # Counteract saved tokenizers
         tokenizer_name = model_name if tokenizer_name is None else tokenizer_name
         is_vlm = (auto_model is AutoModelForVision2Seq)
         is_whisper = (whisper_language is not None and whisper_task is not None)
         auto_processor = AutoProcessor if (is_vlm or is_whisper) else AutoTokenizer
-        if whisper_language and whisper_task:
+        if (whisper_language and whisper_task) or auto_model.__name__.endswith("ForConditionalGeneration"):
            tokenizer = auto_processor.from_pretrained(
                 tokenizer_name,
                 padding_side = "right",
@@ -415,6 +463,7 @@ class FastBaseModel:
             downcast_rope = False,
             fix_embeddings = False,
             do_forced_float32 = do_forced_float32,
+            correct_dtype = correct_dtype,
         )
         model, tokenizer = patch_tokenizer(model, tokenizer)
         model = post_patch_loss_function(model)
@@ -454,15 +503,20 @@ class FastBaseModel:
                 unsloth_base_fast_generate.__doc__ = model._old_generate.__doc__
                 model.generate = types.MethodType(unsloth_base_fast_generate, model)
         pass
+        model._unsloth_trust_remote_code = trust_remote_code
         # Post patches
         model = FastBaseModel.post_patch_model(
             model,
             use_gradient_checkpointing = use_gradient_checkpointing,
+            trust_remote_code  = trust_remote_code,
         )
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
-            torch.cuda.empty_cache()
+            if DEVICE_TYPE == "cuda":
+                torch.cuda.empty_cache()
+            elif DEVICE_TYPE == "xpu":
+                torch.xpu.empty_cache()
         pass
         return model, tokenizer
     pass
@@ -491,7 +545,7 @@ class FastBaseModel:
         loftq_config               = {},
         task_type                  = TaskType.CAUSAL_LM,
         temporary_location         = "_unsloth_temporary_saved_buffers",
-        **kwargs,
+        **kwargs
     ):
         if os.environ.get("UNSLOTH_ENABLE_FULL_FINETUNING", "0") == "1":
             print("Unsloth: Full finetuning is enabled, so .get_peft_model has no effect")
@@ -528,7 +582,10 @@ class FastBaseModel:
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
-            torch.cuda.empty_cache()
+            if DEVICE_TYPE == "cuda":
+                torch.cuda.empty_cache()
+            elif DEVICE_TYPE == "xpu":
+                torch.xpu.empty_cache()
         pass
         max_seq_length = model.max_seq_length
         lora_config = LoraConfig(
@@ -538,6 +595,7 @@ class FastBaseModel:
             lora_dropout    = lora_dropout,
             bias            = bias,
             task_type       = task_type,
+            use_rslora      = use_rslora,
         )
         model = prepare_model_for_kbit_training(
             model,
@@ -546,14 +604,16 @@ class FastBaseModel:
         model = _get_peft_model(model, lora_config)
         # Enable gradients on modules which are trainable
         requires_grad_for_gradient_checkpointing(model)
-
-        model = FastBaseModel.post_patch_model(model, use_gradient_checkpointing)
+        trust_remote_code = getattr(model, "_unsloth_trust_remote_code", False)
+        model = FastBaseModel.post_patch_model(model, use_gradient_checkpointing, trust_remote_code = trust_remote_code)
         model.max_seq_length = max_seq_length
-
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
-            torch.cuda.empty_cache()
+            if DEVICE_TYPE == "cuda":
+                torch.cuda.empty_cache()
+            elif DEVICE_TYPE == "xpu":
+                torch.xpu.empty_cache()
         pass
         patch_saving_functions(model, vision = True)
 
@@ -568,6 +628,7 @@ class FastBaseModel:
     def post_patch_model(
         model,
         use_gradient_checkpointing = True,
+        trust_remote_code = False,
     ):
         full_finetuning = os.environ.get("UNSLOTH_ENABLE_FULL_FINETUNING", "0") == "1"
 
@@ -588,7 +649,7 @@ class FastBaseModel:
         )
 
         from transformers.trainer import Trainer 
-        if Trainer._inner_training_loop.__name__ != "_fast_inner_training_loop":
+        if Trainer._inner_training_loop.__name__ != "_fast_inner_training_loop" and trust_remote_code == False:
             raise RuntimeError('Unsloth: Unsuccessfully patched inner_training_loop')
         pass
         patch_saving_functions(model, vision = True)
@@ -614,7 +675,10 @@ class FastBaseModel:
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
-            torch.cuda.empty_cache()
+            if DEVICE_TYPE == "cuda":
+                torch.cuda.empty_cache()
+            elif DEVICE_TYPE == "xpu":
+                torch.xpu.empty_cache()
         pass
         # Add for_inference and for_training
         model.for_training  = functools.partial(FastBaseModel.for_training,  model)

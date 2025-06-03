@@ -37,11 +37,11 @@ triton = [
 ]
 
 huggingface = [
-    "unsloth_zoo>=2025.5.1",
+    "unsloth_zoo>=2025.5.8",
     "packaging",
     "tyro",
     "transformers==4.51.3,!=4.47.0",
-    "datasets>=2.16.0",
+    "datasets>=3.4.1",
     "sentencepiece>=0.2.0",
     "tqdm",
     "psutil",
@@ -381,11 +381,11 @@ colab-ampere-torch220 = [
     "flash-attn>=2.6.3",
 ]
 colab-new = [
-    "unsloth_zoo>=2025.5.1",
+    "unsloth_zoo>=2025.5.8",
     "packaging",
     "tyro",
     "transformers==4.51.3,!=4.47.0",
-    "datasets>=2.16.0",
+    "datasets>=3.4.1",
     "sentencepiece>=0.2.0",
     "tqdm",
     "psutil",
