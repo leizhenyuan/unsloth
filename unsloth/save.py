@@ -13,7 +13,11 @@
 # limitations under the License.
 
 from unsloth_zoo.utils import Version
-from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
+from unsloth import DEVICE_TYPE
+
+if DEVICE_TYPE == "cuda":
+    from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
+
 from peft.tuners.lora import Linear4bit as Peft_Linear4bit
 from peft.tuners.lora import Linear as Peft_Linear
 from typing import Optional, Callable, Union, List
