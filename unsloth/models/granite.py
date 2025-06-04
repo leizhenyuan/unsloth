@@ -20,8 +20,11 @@ from .llama import (
     LlamaLinearScalingRotaryEmbedding,
 )
 from .mistral import *
-from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
-from peft.tuners.lora import Linear4bit as Peft_Linear4bit
+from unsloth import DEVICE_TYPE
+
+if DEVICE_TYPE == "cuda":
+    from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
+    from peft.tuners.lora import Linear4bit as Peft_Linear4bit
 try:
     from transformers.models.granite.modeling_granite import (
         GraniteAttention,
@@ -509,7 +512,7 @@ class FastGraniteModel(FastLlamaModel):
         correct_dtype = lm_head.weight.dtype
 
         for name, module in model.named_modules():
-            if isinstance(module, (Bnb_Linear4bit, Peft_Linear4bit)):
+            if DEVICE_TYPE== "cuda" and isinstance(module, (Bnb_Linear4bit, Peft_Linear4bit)):
                 weight = module.weight
                 quant_state = weight.quant_state
 
