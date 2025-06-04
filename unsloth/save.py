@@ -18,8 +18,9 @@ from unsloth import DEVICE_TYPE
 if DEVICE_TYPE == "cuda":
     from bitsandbytes.nn import Linear4bit as Bnb_Linear4bit
 
-from peft.tuners.lora import Linear4bit as Peft_Linear4bit
-from peft.tuners.lora import Linear as Peft_Linear
+    from peft.tuners.lora import Linear4bit as Peft_Linear4bit
+    from peft.tuners.lora import Linear as Peft_Linear
+
 from typing import Optional, Callable, Union, List
 import sys
 import requests
@@ -162,7 +163,7 @@ pass
 def _merge_lora(layer, name):
 
     bias = getattr(layer, "bias", None)
-    if isinstance(layer, (Bnb_Linear4bit, Peft_Linear4bit, Peft_Linear)):
+    if DEVICE_TYPE=="cuda" and isinstance(layer, (Bnb_Linear4bit, Peft_Linear4bit, Peft_Linear)):
         # Is LoRA so we need to merge!
         W, quant_state, A, B, s, bias = get_lora_parameters_bias(layer)
         if quant_state is not None:
