@@ -1719,10 +1719,11 @@ class FastLlamaModel:
             if not is_vLLM_available():
                 print("Unsloth: vLLM is not installed! Will use Unsloth inference!")
                 fast_inference = False
-            major_version, minor_version = torch.cuda.get_device_capability()
-            if major_version < 7:
-                print("Unsloth: vLLM does not work on older GPUs - will switch to Unsloth inference!")
-                fast_inference = False
+            if DEVICE_TYPE == "cuda":
+                major_version, minor_version = torch.cuda.get_device_capability()
+                if major_version < 7:
+                    print("Unsloth: vLLM does not work on older GPUs - will switch to Unsloth inference!")
+                    fast_inference = False
         pass
 
         if token is None: token = get_token()
