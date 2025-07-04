@@ -85,6 +85,12 @@ from triton import __version__ as triton_version
 HAS_XFORMERS = xformers is not None
 BlockDiagonalCausalMask = xformers.attn_bias.BlockDiagonalCausalMask if HAS_XFORMERS else None
 
+def clean_gpu_cache():
+    if DEVICE_TYPE == "xpu":
+        torch.xpu.empty_cache()
+    else:
+        torch.cuda.empty_cache()
+
 
 def original_apply_qkv(self, X):
     Q = self.q_proj(X)
@@ -2452,7 +2458,7 @@ class FastLlamaModel:
             # Remove old items to save VRAM
             for _ in range(3):
                 gc.collect()
-                torch.cuda.empty_cache()
+                clean_gpu_cache()
             pass
 
             if train_lm_head:
@@ -2463,7 +2469,7 @@ class FastLlamaModel:
             # Remove old items to save VRAM
             for _ in range(3):
                 gc.collect()
-                torch.cuda.empty_cache()
+                clean_gpu_cache()
             pass
         pass
 
@@ -2524,7 +2530,7 @@ class FastLlamaModel:
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
-            torch.cuda.empty_cache()
+            clean_gpu_cache()
         pass
 
         # Patch for fast inference
@@ -2739,7 +2745,7 @@ class FastLlamaModel:
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
-            torch.cuda.empty_cache()
+            clean_gpu_cache()
         pass
 
         # Patch for fast inference
