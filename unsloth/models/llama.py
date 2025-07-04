@@ -325,8 +325,8 @@ def LlamaAttention_fast_forward_inference(
     # pass
 
     # when qlen==vlen and attn_mask is None, we should use causal attention
-    Q_len = Q.shape[-2]
-    K_len = K.shape[-2]
+    Qn_len = Q.shape[-2]
+    Knn_len = K.shape[-2]
     if attention_mask is None and Q_len == K_len:
         is_causal = True
     else:
@@ -341,9 +341,9 @@ def LlamaAttention_fast_forward_inference(
         A = torch_matmul(A, Vnn, out = Qn)
     else:
         if SDPA_HAS_GQA:
-            A = scaled_dot_product_attention(Qn, Knn, Vnn, attn_mask = attention_mask, is_causal = False, enable_gqa = True)
+            A = scaled_dot_product_attention(Qn, Knn, Vnn, attn_mask = attention_mask, is_causal = is_causal, enable_gqa = True)
         else:
-            A = scaled_dot_product_attention(Qn, Knn, Vnn, attn_mask = attention_mask, is_causal = False)
+            A = scaled_dot_product_attention(Qn, Knn, Vnn, attn_mask = attention_mask, is_causal = is_causal)
     pass
     A = A.transpose(1, 2)
     A = A.reshape(bsz, 1, attention_size)
