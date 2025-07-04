@@ -26,6 +26,8 @@ import torch
 import inspect
 from collections import defaultdict
 from unsloth_zoo.rl_replacements import RL_REPLACEMENTS
+from unsloth import DEVICE_TYPE
+
 RL_EXTRA_ARGS      = defaultdict(list)
 RL_FUNCTIONS       = defaultdict(list)
 RL_PRE_ITEMS       = defaultdict(list)
@@ -178,9 +180,9 @@ def grpo_trainer__prepare_inputs(function_name, function):
         "with torch.inference_mode():",
 
         "with torch.inference_mode(), "\
-        "torch.amp.autocast(device_type = 'cuda', "\
+        f"torch.amp.autocast(device_type = '{DEVICE_TYPE}', "\
         "dtype = ((torch.float16 if os.environ.get('ACCELERATE_MIXED_PRECISION', 'fp16') == 'fp16' else torch.bfloat16) "\
-        "if not torch.is_autocast_enabled('cuda') else nullcontext())"\
+        f"if not torch.is_autocast_enabled('{DEVICE_TYPE}') else nullcontext())"\
         "if os.environ.get('UNSLOTH_FORCE_FLOAT32', '0') == '0' else torch.float16):",
     )
 
@@ -219,7 +221,7 @@ def grpo_trainer__get_per_token_logps(function_name, function):
             if os.environ.get('UNSLOTH_FORCE_FLOAT32', '0') == '1': self._autocast_dtype = torch.float16
 
         os.environ["UNSLOTH_RETURN_HIDDEN_STATES"] = "1"
-        with torch.amp.autocast(device_type = 'cuda', dtype = self._autocast_dtype):
+        with torch.amp.autocast(device_type = DEVICE_TYPE, dtype = self._autocast_dtype):
             # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
             hidden_states = model(input_ids=input_ids, attention_mask=attention_mask, logits_to_keep=logits_to_keep + 1).logits
             #logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
