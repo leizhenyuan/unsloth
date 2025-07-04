@@ -276,6 +276,11 @@ class FastBaseModel:
         pass
         if token is None: token = get_token()
         SUPPORTS_BFLOAT16 = is_bfloat16_supported()
+        if DEVICE_TYPE == "cuda":
+            gpu_stats = torch.cuda.get_device_properties(0)
+        elif DEVICE_TYPE == "xpu":
+            gpu_stats = torch.xpu.get_device_properties(0)
+        max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
 
         if DEVICE_TYPE == "cuda":
             gpu_stats = torch.cuda.get_device_properties(0)
@@ -310,6 +315,7 @@ class FastBaseModel:
         f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. {gpu_stats_snippet} Triton: {triton_version}\n"\
         f"{chr(92)}        /    Bfloat16 = {str(SUPPORTS_BFLOAT16).upper()}. FA [Xformers = {xformers_version}. FA2 = {HAS_FLASH_ATTENTION}]\n"\
         f' "-____-"     Free license: http://github.com/unslothai/unsloth'
+
         
         print(statistics)
 
@@ -350,11 +356,25 @@ class FastBaseModel:
         correct_dtype = None
         if os.environ.get("UNSLOTH_FORCE_CUSTOM_DTYPE", "") != "":
             custom_datatype = os.environ["UNSLOTH_FORCE_CUSTOM_DTYPE"]
-            assert custom_datatype.count(";") == 1
-            bnb_compute_dtype, custom_datatype = custom_datatype.split(";", 1)
-            dtype = torch.float32
-            bnb_compute_dtype = eval(bnb_compute_dtype)
-            correct_dtype = bnb_compute_dtype
+            assert custom_datatype.count(";") >= 4
+            checker, _dtype, _bnb_compute_dtype, _custom_datatype, execute_code = custom_datatype.split(";", 4)
+
+            # Allow custom dtypes on all runs
+            allow_all_runs = (checker == "all")
+            # Allow only on float16 datatypes
+            allow_float16_runs = (checker == "float16" and dtype == torch.float16)
+
+            if allow_all_runs or allow_float16_runs:
+                dtype = eval(_dtype)
+                bnb_compute_dtype = eval(_bnb_compute_dtype)
+                correct_dtype = bnb_compute_dtype
+                custom_datatype = _custom_datatype
+                # Execute code as well
+                if len(execute_code.strip()) != 0:
+                    exec(execute_code)
+            else:
+                custom_datatype = None
+                correct_dtype = None
         pass
 
         # Stop SDPA for some archs like Pixtral / Mistral3
@@ -423,8 +443,15 @@ class FastBaseModel:
 
         # Edit data-types
         if custom_datatype is not None:
-            for name, module in model.named_modules():
+            for jj, (name, module) in enumerate(model.named_modules()):
                 exec(custom_datatype)
+            pass
+        pass
+        # Clear deleted GPU items
+        for _ in range(3):
+            gc.collect()
+            if DEVICE_TYPE == "cuda":  torch.cuda.empty_cache()
+            elif DEVICE_TYPE == "xpu": torch.xpu.empty_cache()
         pass
 
         # Counteract saved tokenizers
@@ -541,7 +568,7 @@ class FastBaseModel:
         finetune_mlp_modules       = True,
         layers_to_transform        = None,
         layers_pattern             = None,
-        use_gradient_checkpointing = True,
+        use_gradient_checkpointing = "unsloth",
         random_state               = 3407,
         max_seq_length             = 2048, # not used anymore
         use_rslora                 = False,
@@ -593,6 +620,8 @@ class FastBaseModel:
                 torch.xpu.empty_cache()
         pass
         max_seq_length = model.max_seq_length
+        # if we pass loftq_config = None we will get an error
+        loftq_config = validate_loftq_config(loftq_config, lora_dropout, bias, init_lora_weights, model)
         lora_config = LoraConfig(
             r                 = r,
             lora_alpha        = lora_alpha,
@@ -713,6 +742,12 @@ class FastBaseModel:
             m = m.model
         _for_inference(m)
 
+        # Since transformers 4.53, must turn off explicitly
+        for module in model.modules():
+            if hasattr(module, "gradient_checkpointing"):
+                module.gradient_checkpointing = False
+        pass
+
         # Also disable training for embeddings for NEFTune
         if hasattr(model, "get_input_embeddings"):
             embeddings = model.get_input_embeddings()
@@ -754,6 +789,12 @@ class FastBaseModel:
             _for_training(m)
             m = m.model
         _for_training(m)
+
+        # Since transformers 4.53, must turn on explicitly
+        for module in model.modules():
+            if hasattr(module, "gradient_checkpointing"):
+                module.gradient_checkpointing = True
+        pass
 
         # Also re-enable training for embeddings for NEFTune
         if hasattr(model, "get_input_embeddings"):
