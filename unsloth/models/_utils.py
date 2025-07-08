@@ -418,6 +418,7 @@ if DEVICE_TYPE == "cuda":
     pass
 elif DEVICE_TYPE == "xpu":
     SUPPORTS_BFLOAT16=True
+    HAS_FLASH_ATTENTION = False
 
 from transformers.models.llama.modeling_llama import logger
 
@@ -552,7 +553,6 @@ def is_big_gpu(index) -> bool:
         return False
     return True
 
->>>>>>> main
 import torch._inductor.utils
 torch._inductor.utils.is_big_gpu = is_big_gpu
 patch_torch_compile(
@@ -724,6 +724,7 @@ def get_statistics():
     _get_statistics(None)
     _get_statistics("repeat", force_download = False)
     try:
+        total_memory = torch.xpu.get_device_properties(0).total_memory if DEVICE_TYPE == "xpu" else torch.cuda.get_device_properties(0).total_memory
         vram = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024
         if   vram <= 8 : vram = 8
         elif vram <= 16: vram = 16
@@ -738,7 +739,7 @@ def get_statistics():
         pass
     pass
     try:
-        devices = torch.cuda.device_count()
+        devices = torch.cuda.device_count() if DEVICE_TYPE == "cuda" else torch.xpu.device_count()
         _get_statistics(f"{devices if devices <= 8 else 9}")
     except:
         pass
