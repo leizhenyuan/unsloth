@@ -115,7 +115,6 @@ pass
 # Get array of CUDA streams and other buffers
 global CUDA_STREAMS
 global XPU_STREAMS
->>>>>>> main
 global WEIGHT_BUFFERS
 global ABSMAX_BUFFERS
 
