@@ -61,7 +61,7 @@ except:
     # Old HF Hub versions <= 0.0.25
     from huggingface_hub.utils._token import get_token
 pass
-from unsloth import DEVICE_TYPE
+from unsloth import DEVICE_TYPE, DEVICE_COUNT
 
 __all__ = [
     "FastBaseModel",
@@ -286,7 +286,6 @@ class FastBaseModel:
             gpu_stats = torch.cuda.get_device_properties(0)
             gpu_version = torch.version.cuda
             gpu_stats_snippet = f"CUDA: {gpu_stats.major}.{gpu_stats.minor}. CUDA Toolkit: {gpu_version}."
-            num_gpus = torch.cuda.device_count()
 
             from importlib.metadata import version as importlib_version
             try:    vllm_version = f" vLLM: {importlib_version('vllm')}."
@@ -294,7 +293,6 @@ class FastBaseModel:
         elif DEVICE_TYPE == "xpu":
             gpu_stats = torch.xpu.get_device_properties(0)
             gpu_version = torch.version.xpu
-            num_gpus = torch.xpu.device_count()
             gpu_stats_snippet = f"Intel Toolkit: {gpu_version}."
 
             # TODO: After adding vLLM support for XPU, changed this
@@ -311,12 +309,15 @@ class FastBaseModel:
 
         statistics = \
         f"==((====))==  Unsloth {__version__}: Fast {model_type_arch.title()} patching. Transformers: {transformers_version}.{vllm_version}\n"\
-        f"   {chr(92)}{chr(92)}   /|    {gpu_stats.name}. Num GPUs = {num_gpus}. Max memory: {max_memory} GB. Platform: {platform_system}.\n"\
+        f"   {chr(92)}{chr(92)}   /|    {gpu_stats.name}. Num GPUs = {DEVICE_COUNT}. Max memory: {max_memory} GB. Platform: {platform_system}.\n"\
         f"O^O/ {chr(92)}_/ {chr(92)}    Torch: {torch.__version__}. {gpu_stats_snippet} Triton: {triton_version}\n"\
         f"{chr(92)}        /    Bfloat16 = {str(SUPPORTS_BFLOAT16).upper()}. FA [Xformers = {xformers_version}. FA2 = {HAS_FLASH_ATTENTION}]\n"\
         f' "-____-"     Free license: http://github.com/unslothai/unsloth'
 
+<<<<<<< HEAD
         
+=======
+>>>>>>> main
         print(statistics)
 
         # Warn about fast transfers
@@ -331,7 +332,7 @@ class FastBaseModel:
         pass
         if old_hf_transfer != "0": os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
-        get_statistics() # For debugging - we use a download counter to see if environments are not breaking 
+        get_statistics() # For debugging - we use a download counter to see if environments are not breaking
 
         if dtype is None:
             dtype = torch.float16 if not SUPPORTS_BFLOAT16 else torch.bfloat16
@@ -428,6 +429,7 @@ class FastBaseModel:
         torch_dtype = dtype
         if do_forced_float32: torch_dtype = torch.bfloat16
 
+        raise_handler = RaiseUninitialized()
         model = auto_model.from_pretrained(
             model_name,
             device_map              = device_map,
@@ -438,6 +440,7 @@ class FastBaseModel:
             # attn_implementation   = attn_implementation,
             **kwargs,
         )
+        raise_handler.remove()
         # Return old flag
         os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = old_hf_transfer
 
@@ -560,7 +563,7 @@ class FastBaseModel:
         r                          = 16,
         target_modules             = None,
         lora_alpha                 = 16,
-        lora_dropout               = 0,
+        lora_dropout               = 0.0,
         bias                       = "none",
         finetune_vision_layers     = True,
         finetune_language_layers   = True,
@@ -610,7 +613,7 @@ class FastBaseModel:
         else:
             assert(type(target_modules) in (list, tuple,))
         pass
-        
+
         # Clear deleted GPU items
         for _ in range(3):
             gc.collect()
@@ -684,7 +687,7 @@ class FastBaseModel:
             float32_mixed_precision    = float32_mixed_precision,
         )
 
-        from transformers.trainer import Trainer 
+        from transformers.trainer import Trainer
         if Trainer._inner_training_loop.__name__ != "_fast_inner_training_loop" and trust_remote_code == False:
             raise RuntimeError('Unsloth: Unsuccessfully patched inner_training_loop')
         pass
@@ -761,6 +764,8 @@ class FastBaseModel:
         os.environ["UNSLOTH_RETURN_HIDDEN_STATES"] = "0"
         # Must enable returning logits
         os.environ["UNSLOTH_RETURN_LOGITS"] = "1"
+        # Turn off skip guards and set stance to default
+        torch.compiler.set_stance(stance = "default", skip_guard_eval_unsafe = False)
         return model
     pass
 
@@ -807,6 +812,8 @@ class FastBaseModel:
         pass
         # Can re-enable not returning logits
         os.environ["UNSLOTH_RETURN_LOGITS"] = "0"
+        # Turn off skip guards and set stance to default
+        torch.compiler.set_stance(stance = "default", skip_guard_eval_unsafe = False)
         return model
     pass
 pass

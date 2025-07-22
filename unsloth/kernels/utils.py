@@ -18,7 +18,8 @@ from typing import Optional
 MAX_FUSED_SIZE : int = 65536
 next_power_of_2 = triton.next_power_of_2
 import functools
-from unsloth import DEVICE_TYPE
+from typing import Optional
+from unsloth import DEVICE_TYPE, DEVICE_COUNT
 
 # torch.cuda.amp.custom_fwd is deprecated >= 2.4
 import torch
@@ -88,10 +89,11 @@ else:
     HAS_CUDA_STREAM = Version(bnb.__version__) > Version("0.43.3")
 
 
-if DEVICE_TYPE == "cuda" and torch.cuda.device_count() > 1:
-    torch_gpu_device = torch.cuda.device
-elif DEVICE_TYPE == "xpu" and torch.xpu.device_count() > 1:
-    torch_gpu_device = torch.xpu.device
+if DEVICE_COUNT > 1:
+    if DEVICE_TYPE == "cuda":
+        torch_gpu_device = torch.cuda.device
+    elif DEVICE_TYPE == "xpu":
+        torch_gpu_device = torch.xpu.device
 else:
     from contextlib import nullcontext
     def torch_gpu_device(device): return nullcontext()
@@ -99,7 +101,7 @@ else:
 
 # INTEL GPU Specific Logic
 if DEVICE_TYPE == "xpu":
-    _gpu_getCurrentRawStream = torch._C._xpu_getCurrentRawStream 
+    _gpu_getCurrentRawStream = torch._C._xpu_getCurrentRawStream
 # NVIDIA GPU Default Logic
 else:
     _gpu_getCurrentRawStream = torch._C._cuda_getCurrentRawStream
@@ -121,12 +123,12 @@ global ABSMAX_BUFFERS
 if DEVICE_TYPE == "xpu":
     _XPU_STREAMS = {
         (index := torch.xpu.device(i).idx) : ctypes.c_void_p(torch._C._xpu_getCurrentRawStream(index))
-        for i in range(torch.xpu.device_count())
+        for i in range(DEVICE_COUNT)
     }
     XPU_STREAMS   = [None] * (max(_XPU_STREAMS.keys()) + 1)
     WEIGHT_BUFFERS = [None] * (max(_XPU_STREAMS.keys()) + 1)
     ABSMAX_BUFFERS = [None] * (max(_XPU_STREAMS.keys()) + 1)
-    for k, v in _XPU_STREAMS.items(): 
+    for k, v in _XPU_STREAMS.items():
         XPU_STREAMS[k] = v
     XPU_STREAMS = tuple(XPU_STREAMS)
     del _XPU_STREAMS
@@ -134,7 +136,7 @@ else:
     # NVIDIA GPU Default Logic
     _CUDA_STREAMS = {
         (index := torch.cuda.device(i).idx) : ctypes.c_void_p(torch._C._cuda_getCurrentRawStream(index))
-        for i in range(torch.cuda.device_count())
+        for i in range(DEVICE_COUNT)
     }
     CUDA_STREAMS   = [None] * (max(_CUDA_STREAMS.keys()) + 1)
     WEIGHT_BUFFERS = [None] * (max(_CUDA_STREAMS.keys()) + 1)
@@ -174,7 +176,7 @@ def get_lora_parameters(proj):
     adapter = getattr(proj, "active_adapters", None)
     if adapter is None: adapter = getattr(proj, "active_adapter", ("default"))
     adapter = adapter[0]
-    
+
     return (
         W,
         getattr(W, "quant_state", None),
@@ -213,7 +215,7 @@ pass
 if DEVICE_TYPE == "xpu" and HAS_XPU_STREAM:
     @torch.inference_mode
     def fast_dequantize(W, quant_state = None, out = None, use_global_buffer = False):
-        # TODO: After adding XPU BNB support, check this function 
+        # TODO: After adding XPU BNB support, check this function
         if quant_state is None: return W
         if type(quant_state) is not list:
             # New quant_state as a class
@@ -516,7 +518,7 @@ elif DEVICE_TYPE == "cuda" and HAS_CUDA_STREAM:
         device = W.device
         device_index = device.index
         CUDA_STREAM = CUDA_STREAMS[device_index]
-        
+
         # assert(dtype == X.dtype)
         bout = shape[0]
 
@@ -650,7 +652,7 @@ def fast_linear_forward(proj, X, temp_lora = None, out = None):
             lora_A._fast_lora = lora_A.to(dtype)
             lora_B._fast_lora = lora_B.to(dtype)
         pass
-        
+
         if bsz == 1:
             out = out.view(out_dim)
             temp_lora = torch_mv(lora_A._fast_lora, X.ravel(), out = temp_lora)
@@ -690,6 +692,6 @@ def matmul_lora(X, W, W_quant, A, B, s, out = None):
         out.addmm_(XA, B.to(dtype), alpha = s)
         # out += (X @ A.to(dtype)) @ (s * B.to(dtype))
     pass
-    
+
     return out.view(batch, seq_len, -1) if reshape else out
 pass
