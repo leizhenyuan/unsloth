@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "2025.6.8"
+__version__ = "2025.7.5"
 
 __all__ = [
     "SUPPORTS_BFLOAT16",
@@ -65,6 +65,8 @@ __all__ = [
     "process_vision_info",
     "unsloth_compile_transformers",
     "patch_fast_lora",
+    "validate_loftq_config",
+    "RaiseUninitialized",
 ]
 
 import torch
@@ -76,7 +78,7 @@ import contextlib
 import re
 import warnings, subprocess, re, inspect, psutil, os, math
 from unsloth_zoo.utils import Version
-from unsloth import DEVICE_TYPE
+from unsloth import DEVICE_TYPE, DEVICE_COUNT
 
 from unsloth_zoo.tokenizer_utils import (
     patch_tokenizer as _patch_tokenizer,
@@ -182,7 +184,17 @@ except:
 try:
     from transformers.generation.utils import logger as transformers_generation_utils_logger
     transformers_generation_utils_logger.addFilter(HideLoggingMessage("Setting `pad_token_id` to `eos_token_id`"))
+    # "You have set `compile_config`
+    transformers_generation_utils_logger.addFilter(HideLoggingMessage("compile_config"))
     del transformers_generation_utils_logger
+except:
+    pass
+
+# The following generation flags are not valid and may be ignored:
+try:
+    from transformers.generation.configuration_utils import logger as configuration_logger
+    configuration_logger.addFilter(HideLoggingMessage("following generation flags"))
+    del configuration_logger
 except:
     pass
 
@@ -202,36 +214,43 @@ try:
 except:
     pass
 
+# Errors out on
+# Some weights of Gemma3nForConditionalGeneration were not initialized from the model checkpoint
+from transformers.modeling_utils import logger as transformers_logger
+class _RaiseUninitialized(logging.Handler):
+    def __init__(self):
+        super().__init__()
+    def emit(self, record):
+        if "some weights of" in str(record).lower():
+            raise Exception(
+                f"Unsloth: Critical error since some weights are not initialized.\n"\
+                f"Please try updating Unsloth, transformers and timm via:\n"\
+                f"`pip install --upgrade --force-reinstall --no-cache-dir --no-deps unsloth unsloth_zoo transformers timm`\n"\
+                f"".str(record))
+pass
+class RaiseUninitialized:
+    def __init__(self):
+        self.error_handler = _RaiseUninitialized()
+        transformers_logger.addHandler(self.error_handler)
+    def remove(self):
+        transformers_logger.removeHandler(self.error_handler)
+pass
+
 # Patch get_model_param_count to record correct 4bit / 8bit
 from transformers.trainer_pt_utils import is_deepspeed_zero3_enabled
 
-def extract_approx_params_from_config(config):
+def extract_quant_model_param_count(model):
     """
-    Extract approximate parameter count from model config's name_or_path
-    Returns int (param count) or None if not found.
+    Calculate quant model param count based on difference in param class. Returns int for param count.
     """
-    lowercase_b_families = ["gemma"] # gemma uses small 'b' : google/gemma-3-1b-it
-    model_name = getattr(config, "name_or_path", "")
-    import re
-    cleaned = re.sub(r"[-_]?bnb[-_]?4bit|[-_]?4bit|[-_]?8bit|[-_]?bnb", "", model_name, flags=re.IGNORECASE) # replace bnb and xbit
-    match_B = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*B", cleaned) # first prefer searching 'B'
-    if match_B:
-        # most model names would come in this flow
-        billions = float(match_B.group(1))
-        return int(1_000_000_000 * billions)
-    else:
-        if any(fam in cleaned.lower() for fam in lowercase_b_families):
-            match_b = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*b", cleaned)
-            if match_b:
-                billions = float(match_b.group(1))
-                return int(1_000_000_000 * billions)
+    count: int = 0
+    for name, p in model.named_parameters():
+        if p.__class__.__name__ == "Params4bit":
+            count += 2 * p.numel()
         else:
-            match_any = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*[bB]", cleaned)
-            if match_any:
-                billions = float(match_any.group(1))
-                return int(1_000_000_000 * billions)
-    return None
-
+            count += p.numel()
+    return count
+pass
 
 def get_model_param_count(model, trainable_only = False):
     """
@@ -247,7 +266,7 @@ def get_model_param_count(model, trainable_only = False):
     if (not trainable_only) and \
         hasattr(model, "config") and \
         hasattr(model.config, "quantization_config"):
-        approx = extract_approx_params_from_config(model.config)
+        approx = extract_quant_model_param_count(model)
         if approx is not None:
             s = approx
     return s
@@ -369,12 +388,11 @@ if is_openai_available():
         def _is_openai_available(): return False
         transformers.utils.is_openai_available = _is_openai_available
     pass
-pass 
+pass
 
 # =============================================
 # Get Flash Attention v2 if Ampere (RTX 30xx, A100)
-if DEVICE_TYPE == "cuda":
-    import bitsandbytes as bnb
+import bitsandbytes as bnb
 
 from transformers import AutoTokenizer
 from transformers.utils.import_utils import _is_package_available
@@ -432,7 +450,8 @@ if DEVICE_TYPE == "cuda":
         HAS_FLASH_ATTENTION = False
     pass
 elif DEVICE_TYPE == "xpu":
-    SUPPORTS_BFLOAT16 = True
+    SUPPORTS_BFLOAT16=True
+    HAS_FLASH_ATTENTION = False
 
 from transformers.models.llama.modeling_llama import logger
 
@@ -551,8 +570,6 @@ UNSLOTH_COMPILE_IGNORE_ERRORS = os.environ.get("UNSLOTH_COMPILE_IGNORE_ERRORS", 
 # Just remove max_autotune_gemm warning
 import functools
 from torch._inductor.runtime.hints import DeviceProperties
-
-from unsloth import DEVICE_TYPE
 
 @functools.lru_cache(None)
 def is_big_gpu(index) -> bool:
@@ -740,6 +757,7 @@ def get_statistics():
     _get_statistics(None)
     _get_statistics("repeat", force_download = False)
     try:
+        total_memory = torch.xpu.get_device_properties(0).total_memory if DEVICE_TYPE == "xpu" else torch.cuda.get_device_properties(0).total_memory
         vram = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024 / 1024
         if   vram <= 8 : vram = 8
         elif vram <= 16: vram = 16
@@ -754,8 +772,7 @@ def get_statistics():
         pass
     pass
     try:
-        devices = torch.cuda.device_count()
-        _get_statistics(f"{devices if devices <= 8 else 9}")
+        _get_statistics(f"{DEVICE_COUNT if DEVICE_COUNT <= 8 else 9}")
     except:
         pass
     if disabled: enable_progress_bars()
@@ -781,13 +798,43 @@ BitsAndBytesConfig__init__ = BitsAndBytesConfig__init__.replace(
 )
 exec(BitsAndBytesConfig__init__, globals())
 
-if torch.cuda.device_count() == 1:
+if DEVICE_COUNT == 1:
     from accelerate.utils.dataclasses import DistributedType
     def _prepare_backend(self, *args, **kwargs): return None, DistributedType.NO
     import accelerate.state
     accelerate.state.PartialState._prepare_backend = _prepare_backend
     accelerate.accelerator.Accelerator.distributed_type = lambda *args, **kwargs: DistributedType.NO
 pass
+
+# to move multiple tensors to the same device
+def move_to_device(target_device, *tensors):
+    """
+    Move multiple tensors to target device if they're not already there.
+
+    Args:
+        target_device: The target device to move tensors to
+        *tensors: Variable number of tensors to potentially move
+
+    Returns:
+        tuple: The tensors on the target device (same objects if already on device, new if moved)
+    """
+    if isinstance(target_device, int):
+        target_device = torch.device(target_device)
+    elif isinstance(target_device, str):
+        # if string we expect it to be a device name like "cuda:0"
+        target_device = torch.device(target_device)
+    elif isinstance(target_device, torch.device):
+        pass
+    else:
+        raise ValueError(f"Invalid target device: {target_device}")
+    pass
+    moved_tensors = []
+    for tensor in tensors:
+        if tensor.device != target_device:
+            moved_tensors.append(tensor.to(target_device))
+        else:
+            moved_tensors.append(tensor)
+    return tuple(moved_tensors) if len(moved_tensors) > 1 else moved_tensors[0]
 
 import transformers.utils.quantization_config
 transformers.utils.quantization_config.BitsAndBytesConfig.__init__ = _BitsAndBytesConfig__init__
@@ -1086,7 +1133,7 @@ pass
 
 
 def patch_gradient_accumulation_fix(Trainer):
-    # Fixes gradient accumulation 
+    # Fixes gradient accumulation
     import inspect
     if hasattr(Trainer, "get_batch_samples"):
         if Trainer.get_batch_samples.__name__ == "_unsloth_get_batch_samples": return
@@ -1160,10 +1207,10 @@ def patch_gradient_accumulation_fix(Trainer):
         "\2if num_items_in_batch is None:\n"\
         "\3loss = loss / self.args.gradient_accumulation_steps\n"\
         "\1self.accelerator.backward(loss, **kwargs)",
-        
+
         function,
     )
-    
+
     exec(function, globals())
     Trainer.training_step = _unsloth_training_step
 pass
@@ -1307,3 +1354,63 @@ if USE_MODELSCOPE:
         raise ImportError(f'You are using the modelscope hub, please install modelscope by `pip install modelscope -U`')
     pass
 pass
+
+
+def validate_loftq_config(loftq_config, lora_dropout, bias, init_lora_weights, model):
+    from peft import LoraConfig
+
+    if loftq_config is None: loftq_config = {}
+
+    signature = str(inspect.signature(LoraConfig))
+    SUPPORTS_LOFTQ  = "loftq_config" in signature
+
+    if lora_dropout != 0:
+        logger.warning_once(
+            f"Unsloth: Dropout = 0 is supported for fast patching. You are using dropout = {lora_dropout}.\n"\
+            f"Unsloth will patch all other layers, except LoRA matrices, causing a performance hit."
+        )
+    pass
+
+    if bias != "none":
+        logger.warning_once(
+            f"Unsloth: bias = `none` is supported for fast patching. You are using bias = {bias}.\n"\
+            f"Unsloth will patch all other layers, except LoRA matrices, causing a performance hit."
+        )
+    pass
+
+    if not (type(init_lora_weights) is bool or \
+        init_lora_weights == "gaussian" or init_lora_weights == "loftq"):
+        raise ValueError(
+            'Unsloth: `init_lora_weights` must be either [True, False, "gaussian", "loftq"].'
+        )
+    pass
+
+    if init_lora_weights == "loftq":
+
+        if not SUPPORTS_LOFTQ:
+            import peft
+            raise RuntimeError(
+                f"Unsloth: Your PEFT version of {peft.__version__} does not support LoftQ init.\n"\
+                "Please install PEFT 0.7.2 or higher.\n"\
+                "You can also install from source: `pip install git+https://github.com/huggingface/peft.git"
+            )
+        pass
+
+        if loftq_config == {}:
+            from peft import LoftQConfig
+            logger.warning_once(
+                "Unsloth: init_lora_weights = `loftq` is set, but `loftq_config` is None.\n"\
+                "We shall use `loftq_config = LoftQConfig(loftq_bits = 4, loftq_iter = 1)`."
+            )
+            loftq_config = LoftQConfig(loftq_bits = 4, loftq_iter = 1)
+        pass
+
+        if hasattr(model.config, "quantization_config"):
+            raise ValueError(
+                "Unsloth: You are using `loftq` init, yet `load_in_4bit = True` was set.\n"\
+                "Reload your model without any quantization by setting `load_in_4bit = False`."
+            )
+        pass
+    pass
+
+    return loftq_config
