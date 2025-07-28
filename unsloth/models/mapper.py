@@ -618,6 +618,11 @@ __INT_TO_FLOAT_MAPPER = \
         "Qwen/Qwen2.5-VL-7B-Instruct",
         "unsloth/Qwen2.5-VL-7B-Instruct-bnb-4bit",
     ),
+    "unsloth/Qwen2.5-VL-32B-Instruct-unsloth-bnb-4bit" : (
+        "unsloth/Qwen2.5-VL-32B-Instruct",
+        "Qwen/Qwen2.5-VL-32B-Instruct",
+        "unsloth/Qwen2.5-VL-32B-Instruct-bnb-4bit",
+    ),
     "unsloth/Qwen2.5-VL-72B-Instruct-unsloth-bnb-4bit" : (
         "unsloth/Qwen2.5-VL-72B-Instruct",
         "Qwen/Qwen2.5-VL-72B-Instruct",
@@ -898,6 +903,11 @@ __INT_TO_FLOAT_MAPPER = \
         "unsloth/gemma-3n-E2B",
         "google/gemma-3n-E2B",
         "unsloth/gemma-3n-E2B-unsloth-bnb-4bit",
+    ),
+    "unsloth/Devstral-Small-2507-unsloth-bnb-4bit" : (
+        "unsloth/Devstral-Small-2507",
+        "mistralai/Devstral-Small-2507",
+        "unsloth/Devstral-Small-2507-bnb-4bit",
     ),
 }
 
