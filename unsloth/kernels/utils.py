@@ -75,22 +75,23 @@ def calculate_settings(n : int) -> (int, int,):
 pass
 
 HAS_CUDA_STREAM = False
+import bitsandbytes as bnb
+get_ptr = bnb.functional.get_ptr
 # INTEL GPU specific logic
 if DEVICE_TYPE == "xpu":
     # TODO: Changed here after adding XPU BNB support
     HAS_XPU_STREAM = True
     def get_ptr(x: Optional[torch.Tensor]):
         raise RuntimeError("XPU BNB support is not implemented yet. This function should not be called.")
+
 else:
     # NVIDIA-GPU logic here as default
-    import bitsandbytes as bnb
     # https://github.com/bitsandbytes-foundation/bitsandbytes/pull/1330/files
     HAS_CUDA_STREAM = Version(bnb.__version__) > Version("0.43.3")
-    get_ptr = bnb.functional.get_ptr
 
 
 if DEVICE_COUNT > 1:
-    if DEVICE_TYPE == "cuda":
+    if DEVICE_TYPE in ("cuda", "hip"):
         torch_gpu_device = torch.cuda.device
     elif DEVICE_TYPE == "xpu":
         torch_gpu_device = torch.xpu.device
@@ -148,31 +149,14 @@ pass
 # Bitsandbytes operations
 ctypes_c_int   = ctypes.c_int
 ctypes_c_int32 = ctypes.c_int32
-# INTEL GPU Specific Logic
-if DEVICE_TYPE == "xpu":
-    # TODO: After adding XPU BNB support, this function should be implemented
-    def cdequantize_blockwise_fp32(*args, **kwargs):
-        raise RuntimeError("XPU BNB support is not implemented yet. cdequantize_blockwise_fp32 should not be called now.")
+cdequantize_blockwise_fp32      = bnb.functional.lib.cdequantize_blockwise_fp32
+cdequantize_blockwise_fp16_nf4  = bnb.functional.lib.cdequantize_blockwise_fp16_nf4
+cdequantize_blockwise_bf16_nf4  = bnb.functional.lib.cdequantize_blockwise_bf16_nf4
+cgemm_4bit_inference_naive_fp16 = bnb.functional.lib.cgemm_4bit_inference_naive_fp16
+cgemm_4bit_inference_naive_bf16 = bnb.functional.lib.cgemm_4bit_inference_naive_bf16
 
-    def cdequantize_blockwise_fp16_nf4(*args, **kwargs):
-        raise RuntimeError("XPU BNB support is not implemented yet. cdequantize_blockwise_fp16_nf4 should not be called now.")
 
-    def cdequantize_blockwise_bf16_nf4(*args, **kwargs):
-        raise RuntimeError("XPU BNB support is not implemented yet. cdequantize_blockwise_bf16_nf4 should not be called now.")
-
-    def cgemm_4bit_inference_naive_fp16(*args, **kwargs):
-        raise RuntimeError("XPU BNB support is not implemented yet. cgemm_4bit_inference_naive_fp16 should not be called now.")
-
-    def cgemm_4bit_inference_naive_bf16(*args, **kwargs):
-        raise RuntimeError("XPU BNB support is not implemented yet. cgemm_4bit_inference_naive_bf16 should not be called now.")
-else:
-    # NVIDIA GPU Default Logic
-    cdequantize_blockwise_fp32      = bnb.functional.lib.cdequantize_blockwise_fp32
-    cdequantize_blockwise_fp16_nf4  = bnb.functional.lib.cdequantize_blockwise_fp16_nf4
-    cdequantize_blockwise_bf16_nf4  = bnb.functional.lib.cdequantize_blockwise_bf16_nf4
-    cgemm_4bit_inference_naive_fp16 = bnb.functional.lib.cgemm_4bit_inference_naive_fp16
-    cgemm_4bit_inference_naive_bf16 = bnb.functional.lib.cgemm_4bit_inference_naive_bf16
-pass
+torch_device_stream = torch.xpu.current_stream if DEVICE_TYPE == "xpu" else torch.cuda.current_stream
 
 torch_mm = torch.mm
 torch_mv = torch.mv
@@ -310,7 +294,7 @@ if DEVICE_TYPE == "xpu" and HAS_XPU_STREAM:
         return out.t() if is_transposed else out
     pass
 # NVIDIA GPU Default Logic
-elif DEVICE_TYPE == "cuda" and HAS_CUDA_STREAM:
+elif DEVICE_TYPE in ("cuda", "hip") and HAS_CUDA_STREAM:
     @torch.inference_mode
     def fast_dequantize(W, quant_state = None, out = None, use_global_buffer = False):
         if quant_state is None: return W
@@ -511,7 +495,7 @@ if  DEVICE_TYPE == "xpu" and HAS_XPU_STREAM:
 
         return out
     pass
-elif DEVICE_TYPE == "cuda" and HAS_CUDA_STREAM:
+elif DEVICE_TYPE in ("cuda", "hip") and HAS_CUDA_STREAM:
     def fast_gemv(X, W, quant_state, out = None):
         if quant_state is None: return torch_matmul(X, W, out = out)
         # For fast X @ W where seq_len == 1
